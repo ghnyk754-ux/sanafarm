@@ -1,0 +1,164 @@
+import discord
+from discord.ext import commands
+import sqlite3
+import random
+import datetime
+from flask import Flask
+from threading import Thread
+
+# --- جزء السيرفر الوهمي (عشان الاستضافة المجانية ما تطفيه) ---
+app = Flask('')
+@app.route('/')
+def home():
+    return "البوت شغال 24/7!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- إعدادات البوت الأساسية ---
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+
+# --- قاعدة البيانات ---
+conn = sqlite3.connect('farm_ultimate.db')
+cursor = conn.cursor()
+cursor.execute('''CREATE TABLE IF NOT EXISTS players (
+    user_id INTEGER PRIMARY KEY, money INTEGER DEFAULT 1000,
+    wheat_seeds INTEGER DEFAULT 0, carrot_seeds INTEGER DEFAULT 0,
+    tomato_seeds INTEGER DEFAULT 0, avocado_seeds INTEGER DEFAULT 0,
+    grape_seeds INTEGER DEFAULT 0, pineapple_seeds INTEGER DEFAULT 0,
+    wheat_crops INTEGER DEFAULT 0, carrot_crops INTEGER DEFAULT 0,
+    tomato_crops INTEGER DEFAULT 0, avocado_crops INTEGER DEFAULT 0,
+    grape_crops INTEGER DEFAULT 0, pineapple_crops INTEGER DEFAULT 0,
+    has_chicken INTEGER DEFAULT 0, has_cow INTEGER DEFAULT 0,
+    eggs INTEGER DEFAULT 0, milk INTEGER DEFAULT 0,
+    stolen_total INTEGER DEFAULT 0, has_dog INTEGER DEFAULT 0,
+    dog_guard_until TEXT, plant_time TEXT, plant_type TEXT, 
+    plant_amount INTEGER DEFAULT 0, last_رزق TEXT
+)''')
+conn.commit()
+
+STORE = {
+    "قمح": {"buy": 15, "sell": 25, "time": 60},
+    "جزر": {"buy": 50, "sell": 85, "time": 300},
+    "طماطم": {"buy": 200, "sell": 340, "time": 600},
+    "أفوكادو": {"buy": 1195, "sell": 1800, "time": 1200},
+    "عنب": {"buy": 5000, "sell": 8500, "time": 2700},
+    "أناناس": {"buy": 15000, "sell": 28000, "time": 3600},
+    "كلب": {"buy": 2000},
+    "دجاجة": {"buy": 3000},
+    "بقرة": {"buy": 8000}
+}
+
+def check_user(user_id):
+    cursor.execute("SELECT user_id FROM players WHERE user_id = ?", (user_id,))
+    if cursor.fetchone() is None:
+        cursor.execute("INSERT INTO players (user_id) VALUES (?)", (user_id,))
+        conn.commit()
+
+# --- الأوامر الأساسية ---
+@bot.command(name="اوامر")
+async def help_guide(ctx):
+    embed = discord.Embed(title="🚜 دليل مزارع 2026", color=discord.Color.green())
+    embed.description = "**💰 اقتصاد:** `رصيد`, `متجر`, `شراء`, `بيع`, `رزق`\n**🌱 زراعة:** `زراعة`, `حصاد`, `ممتلكات`\n**🎮 تسلية:** `حظ`, `صيد`, `نهب`\n**🛡️ حماية:** `إطعام`, `حماية`"
+    await ctx.send(embed=embed)
+
+@bot.command(name="رصيد")
+async def balance(ctx):
+    check_user(ctx.author.id)
+    cursor.execute("SELECT money FROM players WHERE user_id=?", (ctx.author.id,))
+    m = cursor.fetchone()[0]
+    await ctx.send(f"💰 | رصيدك الحالي: **{m:,}** ريال")
+
+@bot.command(name="رزق")
+async def daily(ctx):
+    check_user(ctx.author.id)
+    cursor.execute("SELECT last_رزق FROM players WHERE user_id=?", (ctx.author.id,))
+    if cursor.fetchone()[0] == str(datetime.date.today()): return await ctx.send("أخذت رزقك لليوم!")
+    rew = random.randint(500, 2000)
+    cursor.execute("UPDATE players SET money=money+?, last_رزق=? WHERE user_id=?", (rew, str(datetime.date.today()), ctx.author.id))
+    conn.commit()
+    await ctx.send(f"🎁 | جاءك رزق بقيمة **{rew:,}** ريال")
+
+@bot.command(name="متجر")
+async def store_menu(ctx):
+    embed = discord.Embed(title="🏪 سوق المزرعة", color=discord.Color.gold())
+    desc = "🌾 قمح: 15 | 🥕 جزر: 50 | 🥑 أفوكادو: 1195\n🍍 أناناس: 15000 | 🐕 كلب: 2000\n🐔 دجاجة: 3000 | 🐄 بقرة: 8000"
+    embed.description = desc
+    await ctx.send(embed=embed)
+
+@bot.command(name="شراء")
+async def buy(ctx, amount: int, item: str):
+    check_user(ctx.author.id)
+    if item not in STORE: return await ctx.send("الصنف غير موجود!")
+    cost = STORE[item]['buy'] * amount
+    cursor.execute("SELECT money FROM players WHERE user_id=?", (ctx.author.id,))
+    if cursor.fetchone()[0] < cost: return await ctx.send("فلوسك ما تكفي!")
+    col = {"قمح": "wheat_seeds", "جزر": "carrot_seeds", "أفوكادو": "avocado_seeds", "أناناس": "pineapple_seeds", "كلب": "has_dog", "دجاجة": "has_chicken", "بقرة": "has_cow"}.get(item)
+    cursor.execute(f"UPDATE players SET money=money-?, {col}={col}+? WHERE user_id=?", (cost, amount, ctx.author.id))
+    conn.commit()
+    await ctx.send(f"✅ | تم شراء {amount} {item}")
+
+@bot.command(name="زراعة")
+async def plant(ctx, amount: int, item: str):
+    check_user(ctx.author.id)
+    if item not in STORE or 'time' not in STORE[item]: return await ctx.send("لا يزرع!")
+    col = {"قمح": "wheat_seeds", "جزر": "carrot_seeds", "أفوكادو": "avocado_seeds", "أناناس": "pineapple_seeds"}[item]
+    cursor.execute(f"SELECT {col}, plant_type FROM players WHERE user_id=?", (ctx.author.id,))
+    res = cursor.fetchone()
+    if res[1]: return await ctx.send("أرضك مشغولة!")
+    if res[0] < amount: return await ctx.send("ما عندك بذور!")
+    cursor.execute(f"UPDATE players SET plant_type=?, plant_amount=?, plant_time=?, {col}={col}-? WHERE user_id=?", (item, amount, datetime.datetime.now().isoformat(), amount, ctx.author.id))
+    conn.commit()
+    await ctx.send(f"🌱 | زرعت {amount} {item}")
+
+@bot.command(name="حصاد")
+async def harvest(ctx):
+    check_user(ctx.author.id)
+    cursor.execute("SELECT plant_type, plant_amount, plant_time FROM players WHERE user_id=?", (ctx.author.id,))
+    r = cursor.fetchone()
+    if not r[0]: return await ctx.send("ما زرعت شيء!")
+    elapsed = (datetime.datetime.now() - datetime.datetime.fromisoformat(r[2])).total_seconds()
+    if elapsed < STORE[r[0]]['time']: return await ctx.send(f"باقي {int(STORE[r[0]]['time'] - elapsed)} ثانية")
+    col = {"قمح": "wheat_crops", "جزر": "carrot_crops", "أفوكادو": "avocado_crops", "أناناس": "pineapple_crops"}[r[0]]
+    cursor.execute(f"UPDATE players SET {col}={col}+?, plant_type=NULL WHERE user_id=?", (r[1], ctx.author.id))
+    conn.commit()
+    await ctx.send(f"🧺 | حصدت {r[1]} {r[0]}")
+
+@bot.command(name="إطعام")
+async def feed(ctx):
+    check_user(ctx.author.id)
+    cursor.execute("SELECT has_dog, money FROM players WHERE user_id=?", (ctx.author.id,))
+    res = cursor.fetchone()
+    if not res[0]: return await ctx.send("اشتر كلب أولاً!")
+    if res[1] < 100: return await ctx.send("تحتاج 100 ريال!")
+    until = (datetime.datetime.now() + datetime.timedelta(hours=6)).isoformat()
+    cursor.execute("UPDATE players SET money=money-100, dog_guard_until=? WHERE user_id=?", (until, ctx.author.id))
+    conn.commit()
+    await ctx.send("🐕 | الكلب يحرسك الآن لمدة 6 ساعات")
+
+@bot.command(name="حظ")
+async def gamble(ctx, amount: int):
+    check_user(ctx.author.id)
+    cursor.execute("SELECT money FROM players WHERE user_id=?", (ctx.author.id,))
+    m = cursor.fetchone()[0]
+    if amount <= 0 or amount > m: return await ctx.send("مبلغ غير صالح!")
+    if random.random() < 0.45:
+        cursor.execute("UPDATE players SET money=money+? WHERE user_id=?", (amount, ctx.author.id))
+        await ctx.send(f"🎲 | فزت بـ {amount} ريال!")
+    else:
+        cursor.execute("UPDATE players SET money=money-? WHERE user_id=?", (amount, ctx.author.id))
+        await ctx.send(f"🎲 | خسرت {amount} ريال")
+    conn.commit()
+
+@bot.event
+async def on_ready():
+    print(f'البوت جاهز: {bot.user.name}')
+
+# تشغيل السيرفر الوهمي ثم البوت
+keep_alive()
+bot.run("MTUwNTkxMzIxODU1MDMzMzYzMA.GvjWuO.6slYqtL7NTuhazjKx__U44d81dV8tupZd74SqM")
