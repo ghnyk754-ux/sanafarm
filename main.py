@@ -161,4 +161,4 @@ async def on_ready():
 
 # تشغيل السيرفر الوهمي ثم البوت
 keep_alive()
-bot.run("MTUwNTkxMzIxODU1MDMzMzYzMA.GJt8eQ.")
+bot.run("MTUwNTkxMzIxODU1MDMzMzYzMA.GjBqPl.FJMD_mqvBXcYBRoEzFZPyo6TZIsbeAiNXskyhI")
